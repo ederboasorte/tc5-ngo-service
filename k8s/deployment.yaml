@@ -1,0 +1,137 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ngo-service-config
+  labels:
+    app: ngo-service
+  namespace: solidarytech
+data:
+  PORT: "8081"
+  DB_HOST: "ngo-db.c69c2yweoc4n.us-east-1.rds.amazonaws.com"
+  DB_PORT: "5432"
+  DB_NAME: "ngo_db"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ngo-service-secret
+  labels:
+    app: ngo-service
+  namespace: solidarytech
+type: Opaque
+stringData:
+  DATABASE_URL: "postgres://postgres:postgres@ngo-db.c69c2yweoc4n.us-east-1.rds.amazonaws.com:5432/ngo_db"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ngo-service
+  labels:
+    app: ngo-service
+  namespace: solidarytech
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  selector:
+    matchLabels:
+      app: ngo-service
+
+  template:
+    metadata:
+      labels:
+        app: ngo-service
+    spec:
+      automountServiceAccountToken: false
+
+      securityContext:
+        runAsNonRoot: false
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: ngo-service
+          image: 451638006344.dkr.ecr.us-east-1.amazonaws.com/ngo-service:v1.0.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+
+          envFrom:
+            - configMapRef:
+                name: ngo-service-config
+            - secretRef:
+                name: ngo-service-secret
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ngo-service
+  labels:
+    app: ngo-service
+  namespace: solidarytech
+spec:
+  type: ClusterIP
+  selector:
+    app: ngo-service
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8081
+      targetPort: http
